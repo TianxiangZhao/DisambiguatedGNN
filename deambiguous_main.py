@@ -77,7 +77,7 @@ for seed in seeds:
         #dataset = tg_dataset.CitationFull(root='./datasets/', name='Cora', transform=T.NormalizeFeatures())
         num_sample = 19793
         trans=T.Compose([T.NormalizeFeatures(),T.RandomNodeSplit(split='train_rest', num_val=int(args.val_ratio*num_sample), num_test=int(num_sample*(1-args.val_ratio-args.train_ratio)))])
-        dataset = datasets.CitationFullNew(root='./datasets_new/', name='Cora_full', transform=trans)
+        dataset = datasets.CitationFullNew(root='./datasets_new/', name='cora', transform=trans)
         args.return_data = True
         
     elif args.dataset == 'computer':
