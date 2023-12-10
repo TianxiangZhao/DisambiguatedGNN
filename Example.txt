@@ -1,2 +1,6 @@
-CUDA_VISIBLE_DEVICES=0 python deambiguous_main.py --dataset=actor  --model=gcn --method=BOUND --loss=jsd --log --task=joint --epochs=8000 --Boundrho=0.8 --Boundthresh=0.5 --remote_K=5 --aug_remote --Posthresh=0.75 --Negthresh=0.45 --seed=42 --Boundweight=0.01
-                               
+
+# example of our method + CE
+CUDA_VISIBLE_DEVICES=0 python deambiguous_main.py --dataset=cora_full  --model=gcn --method=BOUND --loss=jsd --log --task=joint --epochs=8000 --Boundrho=0.8 --Boundthresh=0.5 --remote_K=5 --aug_remote --Posthresh=0.7 --Negthresh=0.4 --seed=42 --Boundweight=0.01
+
+# example of the backbone, CE alone
+CUDA_VISIBLE_DEVICES=0 python deambiguous_main.py --dataset=cora_full  --model=gcn --method=SUP --loss=jsd --log --task=joint --epochs=8000 --Boundrho=0.8 --Boundthresh=0.5 --remote_K=5 --aug_remote --Posthresh=0.7 --Negthresh=0.4 --seed=42 --Boundweight=0.01
