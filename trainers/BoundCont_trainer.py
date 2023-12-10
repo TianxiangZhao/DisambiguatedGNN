@@ -18,6 +18,7 @@ from contrasts import DualBranchContrast_ex, SingleBranchContrast_ex
 from plots import plot_chart,plot_dist1D
 import utils
 from sklearn.metrics import f1_score, roc_auc_score
+import time
 
 class Encoder_aug(torch.nn.Module):
     def __init__(self, encoder, augmentor, hidden_dim, proj_dim=32):
@@ -39,7 +40,7 @@ class Encoder_aug(torch.nn.Module):
         z = F.elu(self.fc1(z))
         return self.fc2(z)
     
-class Trainer_BoundCont(object):
+class Trainer_BoundCont(object): 
     def __init__(self, args, model, device, loss, is_sup=False, rho=0.8, thresh=0.7, type='prob', weight=1.0, vis_freq=600):
         # identify boundary nodes in the graph
         # can be used only for loss computation, and worked under other trainers
@@ -137,6 +138,10 @@ class Trainer_BoundCont(object):
     def _neighbor_contrast_loss(self, embeddings, edge_index):
         # 
         sel_idx = (self.boundary_weight>self.thresh).nonzero().flatten()
+        
+        if len(sel_idx) >= 200:
+            value, index = torch.topk(self.boundary_weight, 200)
+            sel_idx = index
 
         #pos_mask = torch.eye(embeddings.shape[0],device=embeddings.device)
         if len(sel_idx) == 0:
@@ -153,7 +158,9 @@ class Trainer_BoundCont(object):
             sel_similarity = embeddings[sel_idx].detach() @ embeddings.detach().t()
             sel_similarity.fill_diagonal_(0)
 
-        for sel_id, node_id in enumerate(sel_idx):
+        print("sel_idx number: {}".format(len(sel_idx)))
+        for sel_id, node_id in enumerate(sel_idx):        
+            start = time.time()
             if node_id in self.neighbor_idx.keys():
                 neighbor_idx = self.neighbor_idx[node_id]
             else:
@@ -161,7 +168,7 @@ class Trainer_BoundCont(object):
                 neighbor_idx2 = edge_index[0,:][(edge_index[1,:]==node_id).nonzero().flatten()]
                 neighbor_idx = torch.cat([neighbor_idx, neighbor_idx2], dim=-1)
                 self.neighbor_idx[node_id] = neighbor_idx
-
+            time_get_neighbor = time.time()-start
 
             if len(neighbor_idx) !=0:
                 with torch.no_grad():
@@ -171,12 +178,17 @@ class Trainer_BoundCont(object):
 
                     pos_mask[node_id,:][pos_idx] = 1
                     neg_mask[node_id,:][neg_idx] = 1
+            time_get_mask = time.time()-time_get_neighbor-start    
 
             # add distant but similar nodes as positive
             if self.aug_remote:
                 _, topk_distant = sel_similarity[sel_id].topk(k=self.remote_K)
                 pos_mask[node_id,:][topk_distant] = 1
-
+            time_remote_aug = time.time() - time_get_mask - time_get_neighbor-start  
+        
+            #print("time to get neighbor: {}, time to get mask: {}, time to get remote aug: {}".format(time_get_neighbor, time_get_mask, time_remote_aug))
+            #ipdb.set_trace()    
+        
         loss = self.loss(anchor=embeddings, sample=embeddings, pos_mask=pos_mask, neg_mask=neg_mask)
         if loss.isnan():
             ipdb.set_trace()
@@ -186,10 +198,8 @@ class Trainer_BoundCont(object):
 
     def loss_summary(self, embeddings, edge_index, group_labels=None):
         # compute the overall boundary-aware loss
-
         loss_bound = self._neighbor_contrast_loss(embeddings, edge_index)
         loss_dict = {"boundary loss": loss_bound.item(), }
-
 
 
         if self.call_count%self.vis_freq==0:
@@ -209,7 +219,8 @@ class Trainer_BoundCont(object):
 
     def train(self, data):
         self.optimizer.zero_grad()
-
+        
+        start = time.time()
         if self.boun_aug:
             self.encoder_model.train()
             embeddings, z2 = self.encoder_model(data.x, data.edge_index, data.edge_attr)
@@ -217,13 +228,15 @@ class Trainer_BoundCont(object):
         else:
             self.encoder.train()
             embeddings = self.encoder.embedding(data.x, data.edge_index, data.edge_attr)
-
+        time_emb = time.time()
+        
         if self.args.return_data:
             loss_bal, losses = self.loss_summary(embeddings, data.edge_index, [data.group_label, data.group_label2])
         else:
             loss_bal, losses = self.loss_summary(embeddings, data.edge_index, [])
 
         loss= loss_bal
+        time_loss = time.time()
 
         if self.boun_aug:
             extra_pos_mask = torch.zeros((h1.shape[0],h1.shape[0]*2),device=h1.device)
@@ -239,6 +252,8 @@ class Trainer_BoundCont(object):
             loss_ssl = self.contrast_model(h1, h2, extra_pos_mask=extra_pos_mask)
             losses['boun_aug loss'] = loss_ssl.item()
             loss += loss_ssl
+            
+        time_aug_loss = time.time()
 
         if self.is_sup:
             y_logit = self.model(data.x, data.edge_index, edge_weight=data.edge_attr)
@@ -248,6 +263,8 @@ class Trainer_BoundCont(object):
             
         else:
             loss = loss
+            
+        time_sup_loss = time.time()
 
         if self.type == 'prob':
             self.update_weight(y_logit.detach())
@@ -256,9 +273,16 @@ class Trainer_BoundCont(object):
             self.update_weight(loss_pred.detach()) # cannot use classification loss here, 1. reduction should set to 'none'; 2. no labels of all nodes
         elif self.type == 'emb':
             self.update_weight(embeddings.detach())
+            
+        time_up_weight = time.time()
 
         loss.backward()
         self.optimizer.step()
+        time_back = time.time()
+        
+        print("embedding time: {}, loss time: {}, aug bound loss time: {}, sup time: {}, update memory time: {}, optimization time: {}".format(time_emb-start, time_loss-time_emb, time_aug_loss-time_loss, time_sup_loss -time_aug_loss, time_up_weight -time_sup_loss, time_back -time_up_weight))
+        print("total time: {}".format(time_back -start))
+        
         
         return losses
    
